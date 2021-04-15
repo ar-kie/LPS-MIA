@@ -15,8 +15,6 @@ output:
    self_contained: true 
 ---
 
----
-
 ```{r load.packages, echo=FALSE, message=FALSE, results='hide'}
 library(DESeq2)
 library(xlsx)
@@ -33,32 +31,11 @@ library(DEGreport)
 library(ggplot2)
 library(ggpubr)
 
-
-knitr::opts_chunk$set( 
-  warning=FALSE,
-  message=FALSE,
-  results = 'asis',
-  error = FALSE,
-  tidy = FALSE,
-  fig.show = "hold")
-```
-
-LPS-MIA base analysis
-```{r load_packages, echo=FALSE}
-library(DESeq2)
-library(xlsx)
-library(Hmisc)
-library(dplyr)
-library(viridis)
-library(pheatmap)
-library(variancePartition)
-library(RColorBrewer)
-library(pcaExplorer)
-library(vsn)
-
 options(check.names = FALSE)
 ```
 
+
+LPS-MIA base analysis
 #Load data
 ```{r load_data, echo=FALSE}
 #Counts
@@ -70,7 +47,7 @@ df <- read.table(file = "UMC-AB-b015_merged_R2.ReadCounts.tsv", sep = '\t', head
 rownames(df) <- make.unique(gsub("__.*","",rownames(df)))
 
 
-#Metadat
+#Metadata
 dir <- file.path("C:", "Users", "rapha", "Dokumente", "UM FN", "Internship", "Internship_Start", "Side projects", "LPS bulk RNA-seq", "metadata")
 setwd(dir)
 
