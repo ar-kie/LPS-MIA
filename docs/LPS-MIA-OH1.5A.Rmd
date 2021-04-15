@@ -1,7 +1,7 @@
 ---
-title: "LPS MIA accute"
+title: "LPS MIA accute OH1.5A"
 author: "Raphael Kübler"
-date: "04/14/2021"
+date: "04/15/2021"
 output:
   rmarkdown::html_document:
    theme: united
@@ -15,9 +15,10 @@ output:
    number_sections: false
    self_contained: true 
 ---
-```{r Helper Functions, echo=FALSE}
-
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 ```
+
 
 ```{r start, echo=TRUE, message=FALSE, results='hide'}
 knitr::opts_chunk$set( 
@@ -25,7 +26,7 @@ knitr::opts_chunk$set(
   message=FALSE,
   results = 'asis',
   error = FALSE,
-  tidy = FALSE,
+  tidy = TRUE,
   fig.show = "hold")
 ```
 
@@ -47,7 +48,7 @@ library(rapport)
 options(check.names = FALSE)
 ```
 
-##Load data
+## Load data
 ```{r load_data, echo=TRUE}
 dir <- file.path("D:", "R", "R workspace")
 setwd(dir)
@@ -56,7 +57,7 @@ load("04132021_LPS orgs_base.RData")
 
 ```
 
-##Update functions
+## Update functions
 ```{r functions, echo=TRUE}
 PCA.covar <- function(df, meta, heatmap.r=F, data.r=F, heatmap.p=T,type="spearman"){
   l <- length(colnames(meta))
@@ -92,10 +93,11 @@ return(data)
 ```
 
 
-##First step QC
+## First step QC
+
 (0) Subsetting and QC
 
-```{r pre-processing, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+```{r pre-processing, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
 #Subsetting a df to samples of interest (accute)
 subset.df <- gfilt.df[colnames(gfilt.df) %in% rownames(filt.meta[filt.meta$Batch %in% 2 & filt.meta$`Cell line` %in% c("OH1.5") & filt.meta$`Accute/chronic` %in% c("Accute"),])]
 subset.df <- subset.df[rowSums(subset.df) >= length(colnames(subset.df)),] #Also removes ERCC SIs
@@ -121,6 +123,10 @@ covar.cor.sub_1 <- covar.cor.sub$r
 
 #500x450
 pheatmap(covar.cor.sub_1, color = heatmap.color.code)
+```
+
+
+```{r pre-processing.2, echo=TRUE, fig.height = 4, fig.width = 5, fig.align = "center"}
 
 #D100 PCA-covariate analysis
 #500x500
@@ -128,8 +134,10 @@ D100.PCAcovar <- PCA.covar(subset.df,cov_for.cor.sub,data.r=T,type="pearson")
 ```
 
 
-##Normalization
+## Normalization
+
 (1) Performing normalization
+
 ```{r normalization, echo=TRUE}
 #For correcting the data
 subset.meta$'Log(library size)' <- scale(subset.meta$`Library size`)
@@ -149,9 +157,11 @@ vsd.complex <- vst(dds.complex)
 
 ```
 
-##Post-normalization QC
+## Post-normalization QC
+
 (2) Performing post-normalization QC:
-```{r norm.qc1, echo=TRUE, fig.height = 5, fig.width = 5, fig.align = "center"}
+
+```{r norm.qc1, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
 #Doing QC on the vst-transformed values
 meanSdPlot(assay(vsd.complex))
 
@@ -185,7 +195,7 @@ sOutliers.norm <- IQRoutlier.detector(norm.df,barplot=T)
 
 ```
 
-```{r norm.qc3, echo=TRUE, fig.height = 5, fig.width = 5, fig.align = "center"}
+```{r norm.qc3, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
 #PCA
 #550x450
 pca.norm <- plotPCA.custom(as.matrix(norm.df), intgroup=c("Cell line", "Stimulation","Experiment"), 
@@ -196,8 +206,10 @@ PCAplot(pca.norm, Condition="Stimulation", PoV.df=PoV.norm)
 
 ```
 
-##Data correction
+## Data correction
+
 (3) Correcting the data
+
 ```{r plots.1, echo=TRUE}
 #Remove batch effects
 #Create a meta df that corresponds to the sorted columns of the vsd assay but has covariates as numeric factors
@@ -218,9 +230,11 @@ batch.rem <- removeBatchEffect(as.matrix(assay(vsd.complex)),
 
 ```
 
-##Post-correction QC
+## Post-correction QC
+
 (4) Post-correction QC
-```{r QC.post, echo=TRUE, fig.height = 5, fig.width = 5, fig.align = "center"}
+
+```{r QC.post, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
 
 #====PC loadings for covariates====#
 #500x500
@@ -231,14 +245,16 @@ D100.PCAcovar.postcorrection <- PCA.covar(batch.rem,covs_forremBatch,data.r=T,ty
 pca.cor <- plotPCA.custom(as.matrix(batch.rem), intgroup=c("Stimulation","Cell line","Experiment"),
                           ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
 PoV.cor <- round(100 * attr(pca.cor, "percentVar"))
+```
 
+```{r norm.qc3.1, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
 #600x450
 PCAplot(pca.cor, "Stimulation",PoV.df=PoV.cor)
 
 ```
 
 
-```{r QC.post2, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+```{r QC.post2, echo=TRUE, fig.height = 5, fig.width = 5.2, fig.align = "center"}
 #Inter sample distances post correction
 sampleDists.postcor <- dist(t(batch.rem))
 sampleDistMatrix.postcor <- as.matrix(sampleDists.postcor)
@@ -256,8 +272,10 @@ pheatmap(sampleDistMatrix.postcor, show_rownames = F,
 ```
 
 
-##DESeq2 anaylsis
+## DESeq2 anaylsis
+
 (5) Performing DESeq2
+
 ```{r DESeq1, echo=TRUE}
 dds.complex <- DESeq(dds.complex)
 
@@ -266,8 +284,10 @@ res.complex <- results(dds.complex, name="Stimulation_LPS_vs_CTR")
 summary(res.complex)
 ```
 
-##Interactive results table
+## Interactive results table
+
 (5.1) Results
+
 ```{r DESeq2, echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
 #DT::renderDT(data.frame(res.complex), "OH1.5A",scrollY=1000)
 
@@ -275,9 +295,11 @@ createDT(data.frame(res.complex), "OH1.5A", scrollY=1000)
 
 ```
 
-##Plotting results
+## Plotting results
+
 (6) Plotting results
-```{r plots.5, echo=TRUE, fig.height = 6, fig.width = 8, fig.align = "center"}
+
+```{r plots.5, echo=TRUE, fig.height = 6, fig.width = 10, fig.align = "center"}
 #Volcano plot
 #700x750
 EnhancedVolcano(res.complex,
@@ -287,6 +309,7 @@ EnhancedVolcano(res.complex,
                 pCutoff = 0.05,
                 FCcutoff = 2,
                 labSize = 6,
+                
                 legendPosition = 'right')
 
 ```
@@ -316,13 +339,15 @@ pheatmap(sub,
 ```
 
 
-##Boxplots of DEGs
+## Boxplots of DEGs
+
 (7) Boxplots of DEGs
-```{r plots.7, echo=TRUE, fig.height = 8, fig.width = 12, fig.align = "center"}
+
+```{r plots.7, echo=TRUE, fig.height = 10, fig.width = 12, fig.align = "center"}
 #Boxplots of DEGs
 rownames(sub) <- gsub('\\.', '_', rownames(sub))
 rownames(sub) <- gsub('\\-', '_', rownames(sub))
-box <- data.frame(scale(t(sub)), Stimulation=annot_df[order(fact.to.sort, decreasing=F),][1])
+box <- data.frame(scale(t(sub)), Stimulation=annot_df[order(fact.to.sort, decreasing=F),])
 
 
 #box.chr <- data.frame(t(sub.ac), Stimulation=sub.meta.ac$Stimulation)

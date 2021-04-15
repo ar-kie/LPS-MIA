@@ -1,5 +1,5 @@
 ---
-title: "LPS MIA accute"
+title: "LPS MIA accute base analysis"
 author: "Raphael Kübler"
 date: "04/14/2021"
 output:
@@ -14,8 +14,11 @@ output:
    number_sections: false
    self_contained: true 
 ---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
-```{r load.packages, echo=FALSE, message=FALSE, results='hide'}
+```{r load_packages, echo=TRUE, message=FALSE, results='hide'}
 library(DESeq2)
 library(xlsx)
 library(Hmisc)
@@ -36,8 +39,10 @@ options(check.names = FALSE)
 
 
 LPS-MIA base analysis
-#Load data
-```{r load_data, echo=FALSE}
+
+## Load data
+
+```{r load_data, echo=TRUE}
 #Counts
 dir <- file.path("C:", "Users", "rapha", "Dokumente", "UM FN", "Internship", "Internship_Start", "Side projects", "LPS bulk RNA-seq", "counts")
 setwd(dir)
@@ -111,8 +116,9 @@ identical(rownames(meta.df.sub), colnames(df))
 
 ```
 
-#Writing functions
-```{r functions, echo=FALSE}
+## Writing functions
+
+```{r functions, echo=TRUE}
 IQRoutlier.detector <- function(df, barplot=T){
   d <- rcorr(as.matrix(df), type="pearson")
   
@@ -244,8 +250,11 @@ PCA.covar <- function(df, meta, heatmap.r=F, data.r=F, heatmap.p=T,type="spearma
 }
 ```
 
+## Pre-processing
+
 (0) Pre-processing
-```{r pre-processing, echo=FALSE}
+
+```{r pre-processing, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
 #Filtering
 #filt.meta <- meta.df.sub[meta.df.sub$Library size > 500000 & meta.df.sub$Library size < 15000000,] #remove large library size-samples
 filt.meta <- meta.df.sub[meta.df.sub$`Library size` > 500000,] #removes no samples
@@ -273,11 +282,13 @@ filt.meta$'Library size post filter' <- colSums(gfilt.df)
 
 ```
 
-#Loading data
+## Preliminary QC
+
 Plotting the first QC results (post-filter QC):
 
 (1) Density plots
-```{r plots.1, echo=FALSE}
+
+```{r pre-processing.1, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
 #Density plot
 #library size
 plot.density(filt.meta,to.color="Stimulation",to.plot="log10(`Library size`)")
@@ -291,13 +302,19 @@ plot.density(filt.meta,to.color="Stimulation",to.plot="`Percent. ERCC`",xlab.tit
 
 ```
 
+## Outlier detection
+
 (2) IQR and inter-sample distances on PCA
-```{r plots.2, echo=FALSE}
+
+```{r pre-processing.2, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
 
 #Outlier detection based on IQR correlation
 sOutliers.filt <- IQRoutlier.detector(gfilt.df,barplot=T)
 sOutliers.filt
 
+```
+
+```{r pre-processing.3, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
 pca <- plotPCA.custom(as.matrix(filt.df), intgroup=c("Cell line", "Batch","Accute/chronic", "Stimulation"), ntop = 50000, returnData=TRUE, 
                       metadata=filt.meta)
 PoV <- round(100 * attr(pca, "percentVar"))
@@ -305,8 +322,12 @@ PCAplot(pca, "Accute/chronic", Shape="Stimulation", PoV.df=PoV)
 PCAplot(pca, "Cell line", Shape="Batch", PoV.df=PoV)
 ```
 
+## Covariate colinearity
+
 (3) Covariate correlation
-```{r plots.3, echo=FALSE}
+
+```{r pre-processing.4, echo=TRUE, fig.height = 5, fig.width = 6, fig.align = "center"}
+
 #Changing factors to factors
 filt.meta$Duplicate <- as.factor(filt.meta$Duplicate)
 filt.meta$Stimulation <- as.factor(filt.meta$Stimulation)
@@ -325,6 +346,9 @@ cov_for.cor$`Accute/chronic` <- as.factor(as.numeric(as.factor(cov_for.cor$`Accu
 cov_for.cor$'Cell line' <- as.factor(as.numeric(cov_for.cor$'Cell line'))
 covar.cor.all <- rcorr(as.matrix(cov_for.cor), type="spearman")
 covar.cor <- covar.cor.all$r
+```
+
+```{r pre-processing.5, echo=TRUE, fig.height = 4, fig.width = 5, fig.align = "center"}
 
 #Covariate correlation
 pheatmap(covar.cor, color = heatmap.color.code)
@@ -332,8 +356,10 @@ pheatmap(covar.cor, color = heatmap.color.code)
 
 ```
 
+## PC-covariate correlation
+
 (4) PC-covariate correlation
-```{r plots.4, echo=FALSE}
+```{r plots.4, echo=TRUE}
 
 #====PC loadings for covariates====#
 identical(colnames(gfilt.df), rownames(cov_for.cor))
