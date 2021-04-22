@@ -33,7 +33,9 @@ library(EnhancedVolcano)
 library(DEGreport)
 library(ggplot2)
 library(ggpubr)
-
+library(factoextra)
+library(broom)
+library(readr)
 options(check.names = FALSE)
 ```
 
@@ -233,11 +235,13 @@ plot.hist <- function(data.to.plot,log10ofdat=T,xlab.title="Data",
 #Function for covar-PC correlation
 #function for PCA
 PCA.covar <- function(df, meta, heatmap.r=F, data.r=F, heatmap.p=T,type="spearman"){
+  l <- length(colnames(meta))
+  l2 <- l+1
   pca.cov <- prcomp(t(df))
-  PC.covs <- pca.cov$x[,1:15]
+  PC.covs <- pca.cov$x[,1:l]
   PC_cov_correlation <- rcorr(as.matrix(PC.covs), as.matrix(meta), type=type)
-  PC_variance.explained <- PC_cov_correlation$r[1:15,16:length(rownames(PC_cov_correlation$r))]
-  PC_cov.cor.p <- PC_cov_correlation$P[1:15,16:length(rownames(PC_cov_correlation$r))]
+  PC_variance.explained <- PC_cov_correlation$r[1:l,l2:length(rownames(PC_cov_correlation$r))]
+  PC_cov.cor.p <- PC_cov_correlation$P[1:l,l2:length(rownames(PC_cov_correlation$r))]
   if (heatmap.r)
     pheatmap(PC_variance.explained, cluster_rows = F, cluster_cols = F, show_colnames = T,
              color = heatmap.color.code)
@@ -248,6 +252,40 @@ PCA.covar <- function(df, meta, heatmap.r=F, data.r=F, heatmap.p=T,type="spearma
   if (data.r)
     return (PC.covs)
 }
+
+
+
+#Manual correlation with adjusted R squared (linear model)
+PCA_cov_cor_R <- function(cov.df,df){
+  l <- length(colnames(df))
+  covariates <- colnames(cov.df)
+  pca.cov <- prcomp(df)
+  var <- get_pca_var(pca.cov) # description of PCs
+  ind <- get_pca_ind(pca.cov) # PCs for individuals
+  matrix_rsquared = matrix(NA, nrow = length(cov.df), ncol = l) #Number of factors
+  matrix_pvalue = matrix(NA, nrow = length(cov.df), ncol = l)
+  
+  for (x in 1:length(covariates)){
+    for (y in 1:l){
+      matrix_rsquared[x,y] <- summary( lm(var$cor[,y] ~ cov.df[,covariates[x]]) )$adj.r.squared
+      matrix_pvalue[x,y] <- glance( lm(var$cor[,y] ~ cov.df[,covariates[x]]) )$p.value #To insert pvalues in the heatmap
+    }
+  }
+  
+  rownames(matrix_rsquared) = covariates
+  rownames(matrix_pvalue) = covariates 
+  colnames(matrix_rsquared) = paste("PC",1:l, sep="")
+  
+  matrix_pvalue = matrix(p.adjust(as.vector(as.matrix(matrix_pvalue)), method='bonferroni'),ncol=ncol(matrix_pvalue))
+  matrix_pvalue = formatC(matrix_pvalue, format = "e", digits = 2)
+  
+  # png(paste0(work_dir, "LinearReg_15pcs_covariates.png"), width = 10, height = 10, res = 600, units = "in")
+  # pdf(paste0(work_dir, "LinearReg_15pcs_covariates.pdf"), width = 10, height = 10)
+  pheatmap(matrix_rsquared, cluster_rows = T, cluster_cols = F, show_colnames = T, show_rownames = T,
+           color = colorRampPalette(RColorBrewer::brewer.pal(6,"RdPu"))(30),
+           display_numbers = F)
+}
+
 ```
 
 ## Pre-processing
@@ -291,7 +329,7 @@ Plotting the first QC results (post-filter QC):
 ```{r pre-processing.1, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
 #Density plot
 #library size
-plot.density(filt.meta,to.color="Stimulation",to.plot="log10(`Library size`)")
+plot.density(filt.meta,to.color="Stimulation",to.plot="`Library size`")
 
 #mtRNA
 plot.density(filt.meta,to.color="Stimulation",to.plot="`Percent. MT`",xlab.title="mtRNA percentage")
@@ -364,5 +402,32 @@ pheatmap(covar.cor, color = heatmap.color.code)
 #====PC loadings for covariates====#
 identical(colnames(gfilt.df), rownames(cov_for.cor))
 PCA.covar(gfilt.df,cov_for.cor,data.r=F)
+
+```
+
+based on a linear model (adjusted R^2)
+```{r plots.5, echo=TRUE}
+
+#====PC loadings for covariates based on a linear model====#
+PCA_cov_cor_R(cov_for.cor, gfilt.df)
+
+```
+
+
+TLR4 and microglia marker expression
+```{r plots.6, echo=TRUE}
+LPS.genes <- sort(c("IFT1", "IFT2", "IFT3", "CXCL8", "CX3CR1", "IL10", "IL1B", "TNF", 
+               "IL6", "TMEM119", "AIF1", "TLR4", "IL12A", "IL23A", "CD40", "P2RY12", "GFAP"))
+genesOI <- gfilt.df[rownames(gfilt.df) %in% coresign,]
+
+dir <- file.path("C:", "Users", "rapha", "Dokumente", "UM FN", "Internship", "Internship_Start", "Project 4 - Synthesis", "Analysis", "Genelists")
+setwd(dir)
+library(readr)
+coresign <- read_lines("PatirEtAl_coreMicrogliaGenes.csv")
+
+pheatmap(genesOI, 
+         cluster_rows = F, 
+         cluster_cols = T, annotation_legend = T, show_colnames = F,
+         scale='row')
 
 ```

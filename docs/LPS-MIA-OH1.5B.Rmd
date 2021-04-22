@@ -1,7 +1,7 @@
 ---
 title: "LPS MIA accute OH1.5B"
 author: "Raphael Kübler"
-date: "04/15/2021"
+date: "04/22/2021"
 output:
   rmarkdown::html_document:
    theme: united
@@ -44,6 +44,8 @@ library(pcaExplorer)
 library(vsn)
 library(EnhancedVolcano)
 library(rapport)
+library(factoextra)
+library(broom)
 
 options(check.names = FALSE)
 ```
@@ -53,7 +55,7 @@ options(check.names = FALSE)
 dir <- file.path("D:", "R", "R workspace")
 setwd(dir)
 
-load("04132021_LPS orgs_base.RData")
+load("04222021_LPS orgs_base.RData")
 
 ```
 
@@ -131,6 +133,7 @@ pheatmap(covar.cor.sub_1, color = heatmap.color.code)
 #D100 PCA-covariate analysis
 #500x500
 D100.PCAcovar <- PCA.covar(subset.df,cov_for.cor.sub,data.r=T,type="pearson")
+PCA_cov_cor_R(cov_for.cor.sub, subset.df)
 ```
 
 
@@ -146,7 +149,7 @@ subset.meta$`Scaled percent. MT` <- scale(subset.meta$"Percent. MT")
 #Create a DESeq2 matrix
 dds.complex <- DESeqDataSetFromMatrix(countData = as.matrix(subset.df),
                                       colData = data.frame(subset.meta),
-                                      design = ~ Log.library.size. + Percent..ERCC + Stimulation)
+                                      design = ~ Log.library.size. + Percent..ERCC + Scaled.percent..MT + Stimulation)
 
 
 #version 2 based on dds object
@@ -222,7 +225,7 @@ covs_forremBatch$Replicate <- as.factor(as.numeric(as.factor(covs_forremBatch$Re
 covs_forremBatch <- covs_forremBatch[!colnames(covs_forremBatch) %in% c("Duplicate","Accute/chronic")]
 
 batch.rem <- removeBatchEffect(as.matrix(assay(vsd.complex)), 
-                               covariates=as.matrix(cbind(covs_forremBatch$`Log(library size)`,
+                               covariates=as.matrix(cbind(covs_forremBatch$`Log(library size)`,covs_forremBatch$`Percent. MT`,
                                                           covs_forremBatch$`Percent. ERCC`
                                                           )),
                                design=model.matrix(~ covs_forremBatch$Stimulation))
@@ -240,6 +243,8 @@ batch.rem <- removeBatchEffect(as.matrix(assay(vsd.complex)),
 #500x500
 covs_forremBatch <- covs_forremBatch[colnames(covs_forremBatch) %in% colnames(cov_for.cor.sub)]
 D100.PCAcovar.postcorrection <- PCA.covar(batch.rem,covs_forremBatch,data.r=T,type="pearson",heatmap.r=T)
+PCA_cov_cor_R(covs_forremBatch,batch.rem)
+
 
 #PCA (550 x 450)
 pca.cor <- plotPCA.custom(as.matrix(batch.rem), intgroup=c("Stimulation","Cell line","Experiment"),
@@ -291,7 +296,7 @@ summary(res.complex)
 ```{r DESeq2, echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
 #DT::renderDT(data.frame(res.complex), "OH1.5A",scrollY=1000)
 
-createDT(data.frame(res.complex), "OH1.5A", scrollY=1000)
+createDT(data.frame(res.complex), "OH1.5B", scrollY=1000)
 
 ```
 
@@ -306,21 +311,22 @@ EnhancedVolcano(res.complex,
                 lab = rownames(res.complex),
                 x = 'log2FoldChange',
                 y = 'padj',
-                pCutoff = 0.05,
-                FCcutoff = 2,
+                pCutoff = 0.1,
+                FCcutoff = 1,
                 labSize = 6,
                 
                 legendPosition = 'right')
 
 ```
 
+
 ```{r plots.6, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
 #Grab significant downreg & highest lfc genes
 if (length(res.complex[is.na(res.complex$padj),]$padj) != 0)
   res.complex[is.na(res.complex$padj),]$padj <- 1
 
-downreg.genes <- rownames(res.complex[res.complex$log2FoldChange < -2 & res.complex$padj < 0.05,])
-upreg.genes <- rownames(res.complex[res.complex$log2FoldChange > 2 & res.complex$padj < 0.05,])
+downreg.genes <- rownames(res.complex[res.complex$log2FoldChange < -1 & res.complex$padj < 0.1,])
+upreg.genes <- rownames(res.complex[res.complex$log2FoldChange > 1 & res.complex$padj < 0.1,])
 
 
 #Plot the genes
@@ -328,6 +334,7 @@ upreg.genes <- rownames(res.complex[res.complex$log2FoldChange > 2 & res.complex
 fact.to.sort <- as.numeric(annot_df$Stimulation)
 sorted <- batch.rem[,order(fact.to.sort, decreasing=F)]
 sub <- sorted[rownames(sorted) %in% c(upreg.genes,downreg.genes),]
+
 #550x1300
 pheatmap(sub, 
          cluster_rows = T, 
@@ -338,6 +345,23 @@ pheatmap(sub,
 
 ```
 
+
+## LPS response genes
+
+(6.1) LPS response and microglia genes
+```{r plots.6.1, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
+LPS.genes <- sort(c("IFT1", "IFT2", "IFT3", "CXCL8", "CX3CR1", "IL10", "IL1B", "TNF", 
+               "IL6", "TMEM119", "AIF1", "TLR4", "IL12A", "IL23A", "CD40", "P2RY12", "GFAP"))
+LPS.sub <- sorted[rownames(sorted) %in% c(LPS.genes),]
+
+pheatmap(LPS.sub, 
+         cluster_rows = T, 
+         cluster_cols = F, annotation_legend = T, show_colnames = F,
+         annotation_col=annot_df[-2], 
+         color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
+
+
+```
 
 ## Boxplots of DEGs
 

@@ -1,0 +1,281 @@
+---
+title: "LPS MIA accute PRO1"
+author: "Raphael Kübler"
+date: "04/15/2021"
+output:
+  rmarkdown::html_document:
+   theme: united
+#   runtime: shiny
+   highlight: tango
+   code_folding: hide
+   toc: true
+   toc_float: true
+   df_print: paged
+   smooth_scroll: true
+   number_sections: false
+   self_contained: true 
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r start, echo=TRUE, message=FALSE, results='hide'}
+knitr::opts_chunk$set( 
+  warning=FALSE,
+  message=FALSE,
+  results = 'asis',
+  error = FALSE,
+  tidy = FALSE,
+  fig.show = "hold")
+```
+
+LPS-MIA base analysis
+```{r load_packages, echo=TRUE, message=FALSE, results='hide'}
+library(DESeq2)
+library(xlsx)
+library(Hmisc)
+library(dplyr)
+library(viridis)
+library(pheatmap)
+library(variancePartition)
+library(RColorBrewer)
+library(pcaExplorer)
+library(vsn)
+library(EnhancedVolcano)
+
+
+options(check.names = FALSE)
+```
+
+## Load data
+```{r load_data, echo=TRUE}
+dir <- file.path("D:", "R", "R workspace")
+setwd(dir)
+
+load("04132021_LPS orgs_base.RData")
+
+```
+
+## Update functions
+```{r functions, echo=TRUE}
+PCA.covar <- function(df, meta, heatmap.r=F, data.r=F, heatmap.p=T,type="spearman"){
+  l <- length(colnames(meta))
+  l2 <- l+1
+  pca.cov <- prcomp(t(df))
+  PC.covs <- pca.cov$x[,1:l]
+  PC_cov_correlation <- rcorr(as.matrix(PC.covs), as.matrix(meta), type=type)
+  PC_variance.explained <- PC_cov_correlation$r[1:l,l2:length(rownames(PC_cov_correlation$r))]
+  PC_cov.cor.p <- PC_cov_correlation$P[1:l,l2:length(rownames(PC_cov_correlation$r))]
+  if (heatmap.r)
+    pheatmap(PC_variance.explained, cluster_rows = F, cluster_cols = F, show_colnames = T,
+             color = heatmap.color.code)
+  if (heatmap.p)
+    pheatmap(PC_cov.cor.p, cluster_rows = F, cluster_cols = F, show_colnames = T,
+             color = colorRampPalette(c("red", "white"))(50),
+             display_numbers = T)
+  if (data.r)
+    return (PC.covs)
+}
+
+createDT <- function(DF, caption="", scrollY=500){
+data <- DT::datatable(DF, caption=caption,
+extensions = 'Buttons',
+options = list( dom = 'Bfrtip',
+buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+scrollY = scrollY, scrollX=T, scrollCollapse = T, paging = F,
+columnDefs = list(list(className = 'dt-center', targets = "_all"))
+)
+)
+return(data)
+}
+
+```
+
+
+## First step QC
+
+(0) Subsetting and QC
+
+```{r pre-processing, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
+#Subsetting a df to samples of interest (accute)
+subset.df <- gfilt.df[colnames(gfilt.df) %in% rownames(filt.meta[filt.meta$`Cell line` %in% c("PRO1") & filt.meta$`Accute/chronic` %in% c("Accute"),])]
+subset.df <- subset.df[rowSums(subset.df) >= length(colnames(subset.df)),] #Also removes ERCC SIs
+
+subset.meta <- filt.meta_clean[rownames(filt.meta_clean) %in% colnames(subset.df),]
+
+#Sort columns
+subset.meta <- subset.meta[sort(rownames(subset.meta)),]
+subset.df <- subset.df[sort(colnames(subset.df))]
+
+all(rownames(subset.meta) == colnames(subset.df))
+
+#Quick density QC
+#550 x 450
+plot.density(subset.meta,to.color="Stimulation",to.plot="`Library size`")
+```
+
+```{r pre-processing.1, echo=TRUE, fig.height = 5, fig.width = 6, fig.align = "center"}
+#Quick covariate analysis
+cov_for.cor <- cov_for.cor[sort(rownames(cov_for.cor)),]
+cov_for.cor.sub <- cov_for.cor[rownames(cov_for.cor) %in% colnames(subset.df),]
+cov_for.cor.sub <- cov_for.cor.sub[!colnames(cov_for.cor.sub) %in% c("Accute/chronic", "Cell line", "Batch", "Experiment")]
+covar.cor.sub <- rcorr(as.matrix(cov_for.cor.sub), type="pearson")
+covar.cor.sub_1 <- covar.cor.sub$r
+
+#500x450
+pheatmap(covar.cor.sub_1, color = heatmap.color.code)
+```
+
+
+```{r pre-processing.2, echo=TRUE, fig.height = 4, fig.width = 5, fig.align = "center"}
+
+#D100 PCA-covariate analysis
+#500x500
+D100.PCAcovar <- PCA.covar(subset.df,cov_for.cor.sub,data.r=T,type="pearson")
+```
+
+
+## Normalization
+
+(1) Performing normalization
+
+```{r normalization, echo=TRUE}
+#For correcting the data
+subset.meta$'Log(library size)' <- scale(subset.meta$`Library size`)
+subset.meta$`Scaled percent. MT` <- scale(subset.meta$"Percent. MT")
+
+#Create a DESeq2 matrix
+dds.complex <- DESeqDataSetFromMatrix(countData = as.matrix(subset.df),
+                                      colData = data.frame(subset.meta),
+                                      design = ~ Log.library.size. + Percent..ERCC + Stimulation)
+
+
+#version 2 based on dds object
+# Estimate library size correction scaling factors
+dds.complex <- estimateSizeFactors(dds.complex)
+
+vsd.complex <- vst(dds.complex)
+
+```
+
+## Post-normalization QC
+
+(2) Performing post-normalization QC:
+
+```{r norm.qc, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
+#Doing QC on the vst-transformed values
+meanSdPlot(assay(vsd.complex))
+
+sampleDists <- dist(t(assay(vsd.complex)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- colnames(vsd.complex)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+annot_df <- data.frame(colData(dds.complex)$Stimulation)
+colnames(annot_df) <- c("Stimulation")
+rownames(annot_df) <- colnames(dds.complex)
+
+annot_colors <- vector('list', length=1)
+
+annot_colors$Stimulation[["CTR"]] <- "#00AFBB"
+annot_colors$Stimulation[["LPS"]] <- "#E7B800"
+```
+
+```{r norm.qc1, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+#Heatmap intersample-distance
+pheatmap(sampleDistMatrix, 
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors,annotation_row = annot_df, annotation_colors = annot_colors)
+
+```
+
+```{r norm.qc2, echo=TRUE, fig.height = 5, fig.width = 4, fig.align = "center"}
+#IQR of samples
+norm.df <- assay(vsd.complex)
+sOutliers.norm <- IQRoutlier.detector(norm.df,barplot=T)
+
+```
+
+```{r norm.qc3, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
+#PCA
+#550x450
+pca.norm <- plotPCA.custom(as.matrix(norm.df), intgroup=c("Cell line", "Stimulation","Experiment"), 
+                           ntop = 50000, returnData=TRUE, metadata=subset.meta)
+PoV.norm <- round(100 * attr(pca.norm, "percentVar"))
+PCAplot(pca.norm, Condition="Stimulation", PoV.df=PoV.norm)
+
+
+```
+
+## Data correction
+
+(3) Correcting the data
+
+```{r plots.1, echo=TRUE}
+#Remove batch effects
+#Create a meta df that corresponds to the sorted columns of the vsd assay but has covariates as numeric factors
+covs_forremBatch <- subset.meta
+covs_forremBatch$Stimulation <- as.factor(as.numeric(covs_forremBatch$Stimulation))
+covs_forremBatch$Experiment <- as.factor(as.numeric(covs_forremBatch$Experiment))
+covs_forremBatch$`Cell line` <- as.factor(as.numeric(covs_forremBatch$`Cell line`))
+covs_forremBatch$`Batch` <- as.factor(as.numeric(covs_forremBatch$`Batch`))
+covs_forremBatch$Replicate <- as.factor(as.numeric(as.factor(covs_forremBatch$Replicate)))
+covs_forremBatch <- covs_forremBatch[!colnames(covs_forremBatch) %in% c("Duplicate","Accute/chronic")]
+
+batch.rem <- removeBatchEffect(as.matrix(assay(vsd.complex)), 
+                               covariates=as.matrix(cbind(covs_forremBatch$`Log(library size)`,
+                                                          covs_forremBatch$`Percent. ERCC`
+                                                          )),
+                               design=model.matrix(~ covs_forremBatch$Stimulation))
+
+
+```
+
+## Post-correction QC
+
+(4) Post-correction QC
+
+```{r QC.post, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+
+#====PC loadings for covariates====#
+#500x500
+covs_forremBatch <- covs_forremBatch[colnames(covs_forremBatch) %in% colnames(cov_for.cor.sub)]
+D100.PCAcovar.postcorrection <- PCA.covar(batch.rem,covs_forremBatch,data.r=T,type="pearson",heatmap.r=T)
+
+#PCA (550 x 450)
+pca.cor <- plotPCA.custom(as.matrix(batch.rem), intgroup=c("Stimulation","Cell line","Experiment"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.cor <- round(100 * attr(pca.cor, "percentVar"))
+```
+
+```{r norm.qc3.1, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
+#600x450
+PCAplot(pca.cor, "Stimulation",PoV.df=PoV.cor)
+
+```
+
+
+```{r QC.post2, echo=TRUE, fig.height = 5, fig.width = 5.5, fig.align = "center"}
+#Inter sample distances post correction
+sampleDists.postcor <- dist(t(batch.rem))
+sampleDistMatrix.postcor <- as.matrix(sampleDists.postcor)
+rownames(sampleDistMatrix.postcor) <- colnames(vsd.complex)
+colnames(sampleDistMatrix.postcor) <- NULL
+
+
+#Heatmap intersample-distance
+#650x500
+pheatmap(sampleDistMatrix.postcor, show_rownames = F,
+         clustering_distance_rows=sampleDists.postcor,
+         clustering_distance_cols=sampleDists.postcor,
+         col=colors, annotation_row = annot_df, annotation_colors = annot_colors)
+
+```
+
+
+## DESeq2 anaylsis
+
+There are no differentially expressed genes.

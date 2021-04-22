@@ -22,5 +22,7 @@
 5. PRO1
 - [LPS MIA PRO1](https://ar-kie.github.io/LPS-MIA/docs/LPS-MIA-PRO1.html). Analyzing the data of cell line PRO1.
 
+6. Accute all samples
+- [LPS MIA accute](https://ar-kie.github.io/LPS-MIA/docs/LPS-MIA-accute.html). Analyzing the data of cell line PRO1.
 
 

@@ -1,7 +1,7 @@
 ---
 title: "LPS MIA accute OH2.6"
 author: "Raphael Kübler"
-date: "04/15/2021"
+date: "04/22/2021"
 output:
   rmarkdown::html_document:
    theme: united
@@ -44,6 +44,8 @@ library(pcaExplorer)
 library(vsn)
 library(EnhancedVolcano)
 library(rapport)
+library(factoextra)
+library(broom)
 
 options(check.names = FALSE)
 ```
@@ -53,7 +55,7 @@ options(check.names = FALSE)
 dir <- file.path("D:", "R", "R workspace")
 setwd(dir)
 
-load("04132021_LPS orgs_base.RData")
+load("04222021_LPS orgs_base.RData")
 
 ```
 
@@ -133,6 +135,7 @@ pheatmap(covar.cor.sub_1, color = heatmap.color.code)
 #D100 PCA-covariate analysis
 #500x500
 D100.PCAcovar <- PCA.covar(subset.df,cov_for.cor.sub,data.r=T,type="pearson")
+PCA_cov_cor_R(cov_for.cor.sub, subset.df)
 ```
 
 
@@ -342,6 +345,22 @@ pheatmap(sub,
 
 ```
 
+## LPS response genes
+
+(6.1) LPS response and microglia genes
+```{r plots.6.1, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
+LPS.genes <- sort(c("IFT1", "IFT2", "IFT3", "CXCL8", "CX3CR1", "IL10", "IL1B", "TNF", 
+               "IL6", "TMEM119", "AIF1", "TLR4", "IL12A", "IL23A", "CD40", "P2RY12", "GFAP"))
+LPS.sub <- sorted[rownames(sorted) %in% c(LPS.genes),]
+
+pheatmap(LPS.sub, 
+         cluster_rows = T, 
+         cluster_cols = F, annotation_legend = T, show_colnames = F,
+         annotation_col=annot_df[-2], 
+         color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
+
+
+```
 
 ## Boxplots of DEGs
 
