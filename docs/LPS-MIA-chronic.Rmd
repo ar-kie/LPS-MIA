@@ -1,0 +1,490 @@
+---
+title: "LPS MIA chronic all samples"
+author: "Raphael Kübler"
+date: "04/28/2021"
+output:
+  rmarkdown::html_document:
+   theme: united
+#   runtime: shiny
+   highlight: tango
+   code_folding: hide
+   toc: true
+   toc_float: true
+   df_print: paged
+   smooth_scroll: true
+   number_sections: false
+   self_contained: true 
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r start, echo=TRUE, message=FALSE, results='hide'}
+knitr::opts_chunk$set( 
+  warning=FALSE,
+  message=FALSE,
+  results = 'asis',
+  error = FALSE,
+  tidy = TRUE,
+  fig.show = "hold")
+```
+
+LPS-MIA base analysis
+```{r load_packages, echo=TRUE, message=FALSE, results='hide'}
+library(DESeq2)
+library(xlsx)
+library(Hmisc)
+library(dplyr)
+library(viridis)
+library(pheatmap)
+library(variancePartition)
+library(RColorBrewer)
+library(pcaExplorer)
+library(vsn)
+library(EnhancedVolcano)
+library(rapport)
+library(factoextra)
+library(broom)
+library(readr)
+options(check.names = FALSE)
+```
+
+## Load data
+```{r load_data, echo=TRUE}
+dir <- file.path("D:", "R", "R workspace")
+setwd(dir)
+
+load("04222021_LPS orgs_base.RData")
+
+```
+
+## Update functions
+```{r functions, echo=TRUE}
+PCA.covar <- function(df, meta, heatmap.r=F, data.r=F, heatmap.p=T,type="spearman"){
+  l <- length(colnames(meta))
+  l2 <- l+1
+  pca.cov <- prcomp(t(df))
+  PC.covs <- pca.cov$x[,1:l]
+  PC_cov_correlation <- rcorr(as.matrix(PC.covs), as.matrix(meta), type=type)
+  PC_variance.explained <- PC_cov_correlation$r[1:l,l2:length(rownames(PC_cov_correlation$r))]
+  PC_cov.cor.p <- PC_cov_correlation$P[1:l,l2:length(rownames(PC_cov_correlation$r))]
+  if (heatmap.r)
+    pheatmap(PC_variance.explained, cluster_rows = F, cluster_cols = F, show_colnames = T,
+             color = heatmap.color.code)
+  if (heatmap.p)
+    pheatmap(PC_cov.cor.p, cluster_rows = F, cluster_cols = F, show_colnames = T,
+             color = colorRampPalette(c("red", "white"))(50),
+             display_numbers = T)
+  if (data.r)
+    return (PC.covs)
+}
+
+createDT <- function(DF, caption="", scrollY=500){
+data <- DT::datatable(DF, caption=caption,
+extensions = 'Buttons',
+options = list( dom = 'Bfrtip',
+buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+scrollY = scrollY, scrollX=T, scrollCollapse = T, paging = F,
+columnDefs = list(list(className = 'dt-center', targets = "_all"))
+)
+)
+return(data)
+}
+
+```
+
+
+## First step QC
+
+(0) Subsetting and QC
+
+```{r pre-processing, echo=TRUE, fig.height = 4, fig.width = 6, fig.align = "center"}
+#Subsetting a df to samples of interest (accute)
+subset.df <- gfilt.df[colnames(gfilt.df) %in% rownames(filt.meta[filt.meta$`Accute/chronic` %in% c("Chronic"),])]
+subset.df <- subset.df[rowSums(subset.df) >= length(colnames(subset.df)),] #Also removes ERCC SIs
+
+subset.meta <- filt.meta_clean[rownames(filt.meta_clean) %in% colnames(subset.df),]
+
+#Sort columns
+subset.meta <- subset.meta[sort(rownames(subset.meta)),]
+subset.df <- subset.df[sort(colnames(subset.df))]
+
+all(rownames(subset.meta) == colnames(subset.df))
+
+#Quick density QC
+#550 x 450
+plot.density(subset.meta,to.color="Stimulation",to.plot="`Library size`")
+
+#Quick covariate analysis
+cov_for.cor <- cov_for.cor[sort(rownames(cov_for.cor)),]
+cov_for.cor.sub <- cov_for.cor[rownames(cov_for.cor) %in% colnames(subset.df),]
+cov_for.cor.sub <- cov_for.cor.sub[!colnames(cov_for.cor.sub) %in% c("Accute/chronic")]
+covar.cor.sub <- rcorr(as.matrix(cov_for.cor.sub), type="pearson")
+covar.cor.sub_1 <- covar.cor.sub$r
+
+#500x450
+pheatmap(covar.cor.sub_1, color = heatmap.color.code)
+```
+
+
+```{r pre-processing.2, echo=TRUE, fig.height = 4, fig.width = 5, fig.align = "center"}
+
+#D100 PCA-covariate analysis
+#500x500
+D100.PCAcovar <- PCA.covar(subset.df,cov_for.cor.sub,data.r=T,type="pearson")
+#PCA_cov_cor_R(cov_for.cor.sub, subset.df)
+```
+
+
+## Normalization
+
+(1) Performing normalization
+
+```{r normalization, echo=TRUE}
+#For correcting the data
+subset.meta$'Log(library size)' <- scale(subset.meta$`Library size`)
+subset.meta$`Scaled percent. MT` <- scale(subset.meta$"Percent. MT")
+
+#Create a DESeq2 matrix
+dds.complex <- DESeqDataSetFromMatrix(countData = as.matrix(subset.df),
+                                      colData = data.frame(subset.meta),
+                                      design = ~ Experiment + Log.library.size. + Percent..ERCC + Scaled.percent..MT + Stimulation)
+
+
+#version 2 based on dds object
+# Estimate library size correction scaling factors
+dds.complex <- estimateSizeFactors(dds.complex)
+
+vsd.complex <- vst(dds.complex)
+
+```
+
+## Post-normalization QC
+
+(2) Performing post-normalization QC:
+
+```{r norm.qc1, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+#Doing QC on the vst-transformed values
+meanSdPlot(assay(vsd.complex))
+
+sampleDists <- dist(t(assay(vsd.complex)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- colnames(vsd.complex)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+annot_df <- data.frame(colData(dds.complex)$Stimulation,colData(dds.complex)$`Cell.line`)
+colnames(annot_df) <- c("Stimulation","Cell line")
+rownames(annot_df) <- colnames(dds.complex)
+
+annot_colors <- vector('list', length=1)
+
+annot_colors$Stimulation[["CTR"]] <- "#00AFBB"
+annot_colors$Stimulation[["LPS"]] <- "#E7B800"
+
+annot_colors$`Cell line`[["OH1.5"]] <- "#2E7281"
+annot_colors$`Cell line`[["OH2.6"]] <- "black"
+annot_colors$`Cell line`[["PRO1"]] <- "#50B8CF"
+
+#Heatmap intersample-distance
+pheatmap(sampleDistMatrix, 
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors,annotation_row = annot_df, annotation_colors = annot_colors)
+
+```
+
+```{r norm.qc2, echo=TRUE, fig.height = 5, fig.width = 4, fig.align = "center"}
+#IQR of samples
+norm.df <- assay(vsd.complex)
+sOutliers.norm <- IQRoutlier.detector(norm.df,barplot=T)
+
+```
+
+```{r norm.qc3, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+#PCA
+#550x450
+pca.norm <- plotPCA.custom(as.matrix(norm.df), intgroup=c("Cell line", "Stimulation","Experiment"), 
+                           ntop = 50000, returnData=TRUE, metadata=subset.meta)
+PoV.norm <- round(100 * attr(pca.norm, "percentVar"))
+PCAplot(pca.norm, Condition="Stimulation", PoV.df=PoV.norm)
+PCAplot(pca.norm, "Cell line", Shape="Experiment",PoV.df=PoV.norm)
+
+```
+
+## Data correction
+
+(3) Correcting the data
+
+```{r plots.1, echo=TRUE}
+#Remove batch effects
+#Create a meta df that corresponds to the sorted columns of the vsd assay but has covariates as numeric factors
+covs_forremBatch <- subset.meta
+covs_forremBatch$Stimulation <- as.factor(as.numeric(covs_forremBatch$Stimulation))
+covs_forremBatch$Experiment <- as.factor(as.numeric(covs_forremBatch$Experiment))
+covs_forremBatch$`Cell line` <- as.factor(as.numeric(covs_forremBatch$`Cell line`))
+covs_forremBatch$`Batch` <- as.factor(as.numeric(covs_forremBatch$`Batch`))
+covs_forremBatch$Replicate <- as.factor(as.numeric(as.factor(covs_forremBatch$Replicate)))
+covs_forremBatch <- covs_forremBatch[!colnames(covs_forremBatch) %in% c("Duplicate","Accute/chronic")]
+
+batch.rem <- removeBatchEffect(as.matrix(assay(vsd.complex)), batch = covs_forremBatch$Experiment, 
+                               covariates=as.matrix(cbind(covs_forremBatch$`Log(library size)`,
+                                                          covs_forremBatch$`Percent. ERCC`,covs_forremBatch$`Scaled percent. MT`
+                                                          )),
+                               design=model.matrix(~ covs_forremBatch$Stimulation))
+batch.rem2 <- removeBatchEffect(as.matrix(assay(vsd.complex)), batch = covs_forremBatch$Experiment, batch2 = covs_forremBatch$Replicate,
+                               covariates=as.matrix(cbind(covs_forremBatch$`Log(library size)`,
+                                                          covs_forremBatch$`Percent. ERCC`,covs_forremBatch$`Scaled percent. MT`
+                                                          )),
+                               design=model.matrix(~ covs_forremBatch$Stimulation))
+
+
+```
+
+## Post-correction QC
+
+(4) Post-correction QC
+
+```{r QC.post, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+
+#====PC loadings for covariates====#
+#500x500
+covs_forremBatch <- covs_forremBatch[colnames(covs_forremBatch) %in% colnames(cov_for.cor.sub)]
+D100.PCAcovar.postcorrection <- PCA.covar(batch.rem,covs_forremBatch,data.r=T,type="pearson",heatmap.r=T)
+#PCA_cov_cor_R(covs_forremBatch, batch.rem)
+
+#PCA (550 x 450)
+pca.cor <- plotPCA.custom(as.matrix(batch.rem), intgroup=c("Stimulation","Cell line","Experiment"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.cor <- round(100 * attr(pca.cor, "percentVar"))
+
+```
+
+
+```{r norm.qc3.1, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
+#600x450
+PCAplot(pca.cor, "Stimulation",PoV.df=PoV.cor)
+PCAplot(pca.cor, "Cell line", Shape="Experiment",PoV.df=PoV.cor)
+
+```
+
+Something that might make you sad: this is how the data looks when we can remove duplicate correlation:
+```{r norm.qc3.2, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+pca.cor2 <- plotPCA.custom(as.matrix(batch.rem2), intgroup=c("Stimulation","Cell line","Experiment"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.cor2 <- round(100 * attr(pca.cor2, "percentVar"))
+PCAplot(pca.cor2, "Stimulation",PoV.df=PoV.cor2)
+PCAplot(pca.cor2, "Cell line", Shape="Experiment",PoV.df=PoV.cor2)
+
+```
+
+
+```{r QC.post2, echo=TRUE, fig.height = 5, fig.width = 5.2, fig.align = "center"}
+#Inter sample distances post correction
+sampleDists.postcor <- dist(t(batch.rem))
+sampleDistMatrix.postcor <- as.matrix(sampleDists.postcor)
+rownames(sampleDistMatrix.postcor) <- colnames(vsd.complex)
+colnames(sampleDistMatrix.postcor) <- NULL
+
+
+#Heatmap intersample-distance
+#650x500
+pheatmap(sampleDistMatrix.postcor, show_rownames = F,
+         clustering_distance_rows=sampleDists.postcor,
+         clustering_distance_cols=sampleDists.postcor,
+         col=colors, annotation_row = annot_df, annotation_colors = annot_colors)
+
+```
+
+
+## DESeq2 anaylsis
+
+(5) Performing DESeq2
+
+```{r DESeq1, echo=TRUE}
+dds.complex <- DESeq(dds.complex)
+
+res.complex <- results(dds.complex, name="Stimulation_LPS_vs_CTR")
+
+summary(res.complex)
+```
+
+## Interactive results table
+
+(5.1) Results
+
+```{r DESeq2, echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+#DT::renderDT(data.frame(res.complex), "OH1.5A",scrollY=1000)
+
+createDT(data.frame(res.complex), "Accute", scrollY=1000)
+
+```
+
+## Plotting results
+
+(6) Plotting results
+
+```{r plots.5, echo=TRUE, fig.height = 6, fig.width = 10, fig.align = "center"}
+#Volcano plot
+#700x750
+EnhancedVolcano(res.complex,
+                lab = rownames(res.complex),
+                x = 'log2FoldChange',
+                y = 'padj',
+                pCutoff = 0.05,
+                FCcutoff = 2,
+                labSize = 6,
+                
+                legendPosition = 'right')
+
+```
+
+```{r plots.6, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
+#Grab significant downreg & highest lfc genes
+if (length(res.complex[is.na(res.complex$padj),]$padj) != 0)
+  res.complex[is.na(res.complex$padj),]$padj <- 1
+
+downreg.genes <- rownames(res.complex[res.complex$log2FoldChange < -2 & res.complex$padj,])
+upreg.genes <- rownames(res.complex[res.complex$log2FoldChange > 2 & res.complex$padj,])
+
+
+#Plot the genes
+#heatmap based on sorted samples for Stimulation:
+fact.to.sort <- as.numeric(annot_df$`Cell line`)
+sorted <- batch.rem[,order(fact.to.sort, decreasing=F)]
+sub <- sorted[rownames(sorted) %in% c(upreg.genes,downreg.genes),]
+#550x1300
+pheatmap(sub, 
+         cluster_rows = T, 
+         cluster_cols = F, annotation_legend = T, show_colnames = F,
+         annotation_col=annot_df, 
+         color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
+
+
+```
+
+## LPS response & microglia genes
+
+(6.1) LPS response genes
+```{r plots.6.1, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
+LPS.genes <- sort(c("IFT1", "IFT2", "IFT3", "CXCL8", "CX3CR1", "IL10", "IL1B", "TNF", 
+               "IL6", "TMEM119", "AIF1", "TLR4", "IL12A", "IL23A", "CD40", "P2RY12", "GFAP"))
+LPS.sub <- sorted[rownames(sorted) %in% c(LPS.genes),]
+
+pheatmap(LPS.sub, 
+         cluster_rows = T, 
+         cluster_cols = F, annotation_legend = T, show_colnames = F,
+         annotation_col=annot_df, 
+         color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
+
+
+```
+
+
+## Patir et al. microglia markers
+(6.2) Patir et al. marker genes
+```{r plots.6.2, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
+dir <- file.path("C:", "Users", "rapha", "Dokumente", "UM FN", "Internship", "Internship_Start", "Project 4 - Synthesis", "Analysis", "Genelists")
+
+setwd(dir)
+
+coresign <- read_lines("PatirEtAl_coreMicrogliaGenes.csv")
+genesOI <- batch.rem[rownames(batch.rem) %in% coresign,]
+
+pheatmap(genesOI, 
+         cluster_rows = F, show_rownames = F,
+         cluster_cols = T, annotation_legend = T, show_colnames = F,
+         annotation_col=annot_df, fontsize = 6,
+         color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
+
+pheatmap(genesOI, 
+         cluster_rows = F, show_rownames = F,
+         cluster_cols = F, annotation_legend = T, show_colnames = F,
+         annotation_col=annot_df,
+         color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
+
+
+
+```
+
+
+## Patir et al. microglia markers
+(7) Composite microglia marker score:
+```{r plots.7, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+Patir_score <- prcomp(t(genesOI))
+
+#identical(colnames(genesOI), rownames(subset.meta))
+
+
+#rcorr(as.matrix(Patir_score$x), as.matrix(as.numeric(subset.meta$Stimulation)))
+
+PCA.covar(genesOI,covs_forremBatch,data.r=F,type="pearson",heatmap.r=T)
+
+PCA_cov_cor_R(covs_forremBatch,genesOI)
+
+
+```
+
+(7.1) Look at the PCA:
+```{r plots.71, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+pca.mic <- plotPCA.custom(as.matrix(genesOI), intgroup=c("Stimulation","Cell line","Experiment"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.mic <- round(100 * attr(pca.mic, "percentVar"))
+
+PCAplot(pca.mic, "Stimulation", Shape="Experiment",PoV.df=PoV.mic)
+```
+
+## LPS response genes
+(8) Composite LPS response score:
+```{r plots.8, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+LPS_score <- prcomp(t(LPS.sub))
+
+#identical(colnames(LPS.sub), rownames(subset.meta))
+
+#rcorr(as.matrix(LPS_score$x), as.matrix(as.numeric(subset.meta$Stimulation)))
+
+PCA.covar(LPS.sub,covs_forremBatch,data.r=F,T,type="pearson",heatmap.r=T)
+
+#PCA_cov_cor_R(covs_forremBatch,LPS.sub)
+
+```
+
+```{r LPS.PCA, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+
+pca.LPS <- plotPCA.custom(as.matrix(LPS.sub), intgroup=c("Stimulation","Cell line","Experiment","Replicate"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.LPS <- round(100 * attr(pca.LPS, "percentVar"))
+
+PCAplot(pca.LPS, "Stimulation", Shape="Experiment",PoV.df=PoV.LPS)
+
+```
+
+
+## Association between LPS response and microglia signatures
+(9) How strongly are the microglia signature and the LPS response correlated?
+
+```{r plots.9, echo=TRUE, fig.height = 5, fig.width = 5, fig.align = "center"}
+LPS.mic <- data.frame(cbind("LPS"=scale(colMeans(LPS.sub)), "Microglia signature"=scale(colMeans(genesOI))))
+colnames(LPS.mic) <- c("LPS","Microglia signature")
+library(ggpmisc)
+formula <- y ~ x  
+ggplot(LPS.mic, aes_string(y= as.matrix(LPS.mic["LPS"]), x= as.matrix(LPS.mic["Microglia signature"]))) +  
+  geom_point() + 
+  scale_colour_gradient(low = "gray90", high = "black") +
+  stat_smooth(method=lm) +
+  theme_bw()+
+  theme(plot.title = element_text(hjust=0.5))+
+  geom_smooth(method=lm, linetype="dashed")+
+  labs(y = "Cumulative LPS response score", x = "Microglia signature score")+
+  stat_poly_eq(aes(label = c(paste(..adj.rr.label..))), 
+               label.x = "right", label.y = 0.37,
+               formula = formula, parse = TRUE, size = 3)+
+  #  geom_cor(method='pearson')+
+  stat_fit_glance(method = 'lm',
+                  method.args = list(formula = formula),
+                  geom = 'text',
+                  aes(label = paste("P-value = ", signif(..p.value.., digits = 3), sep = "")),
+                  label.x = 'right', label.y = 0.3, size = 3)
+
+```

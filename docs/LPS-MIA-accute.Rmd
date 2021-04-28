@@ -1,7 +1,7 @@
 ---
 title: "LPS MIA accute all samples"
 author: "Raphael Kübler"
-date: "04/22/2021"
+date: "04/27/2021"
 output:
   rmarkdown::html_document:
    theme: united
@@ -133,7 +133,7 @@ pheatmap(covar.cor.sub_1, color = heatmap.color.code)
 #D100 PCA-covariate analysis
 #500x500
 D100.PCAcovar <- PCA.covar(subset.df,cov_for.cor.sub,data.r=T,type="pearson")
-PCA_cov_cor_R(cov_for.cor.sub, subset.df)
+#PCA_cov_cor_R(cov_for.cor.sub, subset.df)
 ```
 
 
@@ -183,6 +183,10 @@ annot_colors <- vector('list', length=1)
 annot_colors$Stimulation[["CTR"]] <- "#00AFBB"
 annot_colors$Stimulation[["LPS"]] <- "#E7B800"
 
+annot_colors$`Cell line`[["OH1.5"]] <- "#2E7281"
+annot_colors$`Cell line`[["OH2.6"]] <- "black"
+annot_colors$`Cell line`[["PRO1"]] <- "#50B8CF"
+
 #Heatmap intersample-distance
 pheatmap(sampleDistMatrix, 
          clustering_distance_rows=sampleDists,
@@ -198,7 +202,7 @@ sOutliers.norm <- IQRoutlier.detector(norm.df,barplot=T)
 
 ```
 
-```{r norm.qc3, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
+```{r norm.qc3, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
 #PCA
 #550x450
 pca.norm <- plotPCA.custom(as.matrix(norm.df), intgroup=c("Cell line", "Stimulation","Experiment"), 
@@ -248,12 +252,13 @@ batch.rem2 <- removeBatchEffect(as.matrix(assay(vsd.complex)), batch = covs_forr
 #500x500
 covs_forremBatch <- covs_forremBatch[colnames(covs_forremBatch) %in% colnames(cov_for.cor.sub)]
 D100.PCAcovar.postcorrection <- PCA.covar(batch.rem,covs_forremBatch,data.r=T,type="pearson",heatmap.r=T)
-PCA_cov_cor_R(covs_forremBatch, batch.rem)
+#PCA_cov_cor_R(covs_forremBatch, batch.rem)
 
 #PCA (550 x 450)
 pca.cor <- plotPCA.custom(as.matrix(batch.rem), intgroup=c("Stimulation","Cell line","Experiment"),
                           ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
 PoV.cor <- round(100 * attr(pca.cor, "percentVar"))
+
 ```
 
 
@@ -265,7 +270,7 @@ PCAplot(pca.cor, "Cell line", Shape="Experiment",PoV.df=PoV.cor)
 ```
 
 Something that might make you sad: this is how the data looks when we can remove duplicate correlation:
-```{r norm.qc3.2, echo=TRUE, fig.height = 4, fig.width = 5.5, fig.align = "center"}
+```{r norm.qc3.2, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
 pca.cor2 <- plotPCA.custom(as.matrix(batch.rem2), intgroup=c("Stimulation","Cell line","Experiment"),
                           ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
 PoV.cor2 <- round(100 * attr(pca.cor2, "percentVar"))
@@ -346,7 +351,7 @@ upreg.genes <- rownames(res.complex[res.complex$log2FoldChange > 2 & res.complex
 
 #Plot the genes
 #heatmap based on sorted samples for Stimulation:
-fact.to.sort <- as.numeric(annot_df$Stimulation)
+fact.to.sort <- as.numeric(annot_df$`Cell line`)
 sorted <- batch.rem[,order(fact.to.sort, decreasing=F)]
 sub <- sorted[rownames(sorted) %in% c(upreg.genes,downreg.genes),]
 #550x1300
@@ -376,6 +381,7 @@ pheatmap(LPS.sub,
 
 ```
 
+
 ## Patir et al. microglia markers
 (6.2) Patir et al. marker genes
 ```{r plots.6.2, echo=TRUE, fig.height = 6, fig.width = 6, fig.align = "center"}
@@ -398,5 +404,87 @@ pheatmap(genesOI,
          annotation_col=annot_df,
          color = heatmap.color.code, scale='row', annotation_colors = annot_colors)
 
+
+
+```
+
+
+## Patir et al. microglia markers
+(7) Composite microglia marker score:
+```{r plots.7, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+Patir_score <- prcomp(t(genesOI))
+
+#identical(colnames(genesOI), rownames(subset.meta))
+
+
+#rcorr(as.matrix(Patir_score$x), as.matrix(as.numeric(subset.meta$Stimulation)))
+
+PCA.covar(genesOI,covs_forremBatch,data.r=F,type="pearson",heatmap.r=T)
+
+PCA_cov_cor_R(covs_forremBatch,genesOI)
+
+
+```
+
+(7.1) Look at the PCA:
+```{r plots.71, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+pca.mic <- plotPCA.custom(as.matrix(genesOI), intgroup=c("Stimulation","Cell line","Experiment"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.mic <- round(100 * attr(pca.mic, "percentVar"))
+
+PCAplot(pca.mic, "Stimulation", Shape="Experiment",PoV.df=PoV.mic)
+```
+
+## LPS response genes
+(8) Composite LPS response score:
+```{r plots.8, echo=TRUE, fig.height = 4, fig.width = 4, fig.align = "center"}
+LPS_score <- prcomp(t(LPS.sub))
+
+#identical(colnames(LPS.sub), rownames(subset.meta))
+
+#rcorr(as.matrix(LPS_score$x), as.matrix(as.numeric(subset.meta$Stimulation)))
+
+PCA.covar(LPS.sub,covs_forremBatch,data.r=F,type="pearson",heatmap.r=T)
+
+#PCA_cov_cor_R(covs_forremBatch,LPS.sub)
+
+```
+
+```{r LPS.PCA, echo=TRUE, fig.height = 4, fig.width = 6.5, fig.align = "center"}
+
+pca.LPS <- plotPCA.custom(as.matrix(LPS.sub), intgroup=c("Stimulation","Cell line","Experiment","Replicate"),
+                          ntop = 50000, returnData=TRUE, metadata=subset.meta, pc.1=1,pc.2=2)
+PoV.LPS <- round(100 * attr(pca.LPS, "percentVar"))
+
+PCAplot(pca.LPS, "Stimulation", Shape="Experiment",PoV.df=PoV.LPS)
+
+```
+
+
+## Association between LPS response and microglia signatures
+(9) How strongly are the microglia signature and the LPS response correlated?
+
+```{r plots.9, echo=TRUE, fig.height = 5, fig.width = 5, fig.align = "center"}
+LPS.mic <- data.frame(cbind("LPS"=scale(colMeans(LPS.sub)), "Microglia signature"=scale(colMeans(genesOI))))
+colnames(LPS.mic) <- c("LPS","Microglia signature")
+library(ggpmisc)
+formula <- y ~ x  
+ggplot(LPS.mic, aes_string(y= as.matrix(LPS.mic["LPS"]), x= as.matrix(LPS.mic["Microglia signature"]))) +  
+  geom_point() + 
+  scale_colour_gradient(low = "gray90", high = "black") +
+  stat_smooth(method=lm) +
+  theme_bw()+
+  theme(plot.title = element_text(hjust=0.5))+
+  geom_smooth(method=lm, linetype="dashed")+
+  labs(y = "Cumulative LPS response score", x = "Microglia signature score")+
+  stat_poly_eq(aes(label = c(paste(..adj.rr.label..))), 
+               label.x = "right", label.y = 0.37,
+               formula = formula, parse = TRUE, size = 3)+
+  #  geom_cor(method='pearson')+
+  stat_fit_glance(method = 'lm',
+                  method.args = list(formula = formula),
+                  geom = 'text',
+                  aes(label = paste("P-value = ", signif(..p.value.., digits = 3), sep = "")),
+                  label.x = 'right', label.y = 0.3, size = 3)
 
 ```
